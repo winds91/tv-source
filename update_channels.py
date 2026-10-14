@@ -142,18 +142,17 @@ async def fetch_one(context, task, sem):
             await page.wait_for_timeout(2000)  # 等播放器初始化
             await page.mouse.click(640, 360)   # 点击页面中央
 
-            # 10秒后还没抓到m3u8，补一次点击（应对偶发不触发的频道）
-            await page.wait_for_timeout(10000)
-            if not m3u8_urls:
-                await page.mouse.click(640, 360)
-
             # 智能等待：最多等30秒，每1秒检查一次m3u8是否出现
-            # 出现后再等3秒让其他码率线路也加载完
+            # 出现后再等2秒让其他码率线路也加载完
+            # 如果前10秒没抓到，第11秒补一次点击
             for i in range(30):
                 await page.wait_for_timeout(1000)
                 if m3u8_urls:
-                    await page.wait_for_timeout(3000)
+                    await page.wait_for_timeout(2000)
                     break
+                # 第10秒还没抓到，补一次点击
+                if i == 9 and not m3u8_urls:
+                    await page.mouse.click(640, 360)
         except Exception as e:
             print(f"  [{display}] err: {e}")
         finally:
