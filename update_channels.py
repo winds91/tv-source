@@ -79,7 +79,6 @@ YANGSHIPIN_CHANNELS = [
     (600190406, "青海卫视",          "sat"),
     (600190403, "西藏卫视",          "sat"),
     (600171827, "中国教育",          "sat"),
-    (600193252, "兵团卫视",          "sat"),
 ]
 
 LOCAL_FILE = "live_channels.txt"
@@ -108,7 +107,7 @@ async def fetch_one(context, task, sem):
 
             await page.goto(page_url, wait_until="load", timeout=30000)
 
-            # 注入JS：主动查找video元素并触发播放（模拟my-tv-1的ahtv1.js逻辑）
+            # 注入JS：主动查找video元素并触发播放
             # 解决yangshipin播放器不自动播放导致抓不到m3u8的问题
             play_js = """
             (function() {
@@ -133,23 +132,26 @@ async def fetch_one(context, task, sem):
                         triggerPlay(videos[i]);
                     }
                 }
-                // 立即检查一次
                 checkVideo();
-                // 每2秒检查一次，持续30秒
-                var interval = setInterval(function() {
-                    checkVideo();
-                }, 2000);
-                setTimeout(function() { clearInterval(interval); }, 30000);
+                setInterval(checkVideo, 1000);
             })();
             """
             await page.evaluate(play_js)
 
-            # 智能等待：最多等40秒，每1秒检查一次m3u8是否出现
+            # 模拟点击页面中央触发播放（体育频道等需要用户点击才会加载m3u8）
+            await page.wait_for_timeout(2000)  # 等播放器初始化
+            await page.mouse.click(640, 360)   # 点击页面中央
+
+            # 10秒后还没抓到m3u8，补一次点击（应对偶发不触发的频道）
+            await page.wait_for_timeout(10000)
+            if not m3u8_urls:
+                await page.mouse.click(640, 360)
+
+            # 智能等待：最多等30秒，每1秒检查一次m3u8是否出现
             # 出现后再等3秒让其他码率线路也加载完
-            for i in range(40):
+            for i in range(30):
                 await page.wait_for_timeout(1000)
                 if m3u8_urls:
-                    # 已经抓到至少一个，再等3秒让其他线路加载
                     await page.wait_for_timeout(3000)
                     break
         except Exception as e:
