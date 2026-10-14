@@ -3,7 +3,7 @@ name: Update TV Channels
 on:
   schedule:
     - cron: '0 2 * * *'  # 每天凌晨2点（北京时间上午10点）
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   update:
@@ -21,19 +21,19 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/update_channels.py') }}
+          key: ${{ runner.os }}-playwright-v1
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          if [ ${{ steps.playwright-cache.outputs.cache-hit }} != 'true' ]; then
-            playwright install chromium --with-deps
-          fi
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps
 
       - name: Update channels
         run: python update_channels.py
