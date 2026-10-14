@@ -3,6 +3,7 @@
 # 用 async_playwright 真正并发抓页面，避免 sync API 跨线程问题
 
 import asyncio
+import re
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -106,7 +107,15 @@ async def fetch_one(context, task, sem):
             page.on("response", on_response)
 
             await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(WAIT_MS)
+
+            # 智能等待：最多等25秒，每1秒检查一次m3u8是否出现
+            # 出现后再等3秒让其他码率线路也加载完
+            for i in range(25):
+                await page.wait_for_timeout(1000)
+                if m3u8_urls:
+                    # 已经抓到至少一个，再等3秒让其他线路加载
+                    await page.wait_for_timeout(3000)
+                    break
         except Exception as e:
             print(f"  [{display}] err: {e}")
         finally:
@@ -209,13 +218,29 @@ def main():
                 dead += 1
     print(f"  可用 {len(alive)}, 失效 {dead}")
 
+    def sort_key(display):
+        """频道排序key：CCTV按编号，CGTN/付费排后，卫视按名称"""
+        m = re.match(r'CCTV-(\d+)(.*)', display)
+        if m:
+            num = int(m.group(1))
+            suffix = m.group(2)
+            if '+' in suffix:
+                return (0, num, 1, display)  # 5+ 排在5后面
+            return (0, num, 0, display)
+        if display.startswith('CGTN'):
+            return (1, 0, 0, display)
+        if display.startswith('CCTV '):
+            return (2, 0, 0, display)  # 付费频道排在最后
+        return (3, 0, 0, display)
+
     def filter_out(d):
         out = []
         for display, urls in d.items():
             good = [u for u in urls if u in alive]
             if good:
-                out.append(f"{display},{'#'.join(good)}")
-        return out
+                out.append((display, f"{display},{'#'.join(good)}"))
+        out.sort(key=lambda x: sort_key(x[0]))
+        return [line for _, line in out]
 
     cctv_out = filter_out(cctv_channels)
     plus_out = filter_out(plus_channels)
