@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
-# GitHub Actions自动更新直播源脚本（纯央视听yangshipin.cn官方源 + Playwright无头浏览器）
-# 原理：用Playwright打开yangshipin.cn每个pid对应的直播页，监听真实m3u8网络响应
-# 数据来源：my-tv-1项目解密得到的pid列表，覆盖央视高清镜像 + CGTN + 付费频道 + 全国卫视
+# GitHub Actions自动更新直播源脚本（纯央视听yangshipin.cn官方源 + Playwright async并发）
+# 用 async_playwright 真正并发抓页面，避免 sync API 跨线程问题
 
+import asyncio
+import aiohttp
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 央视听yangshipin.cn频道列表
-# (pid, 统一频道显示名, 分组)
-#   cctv = 央视频道组（CCTV-1~17高清镜像）
-#   plus = 央视精品组（CGTN/付费/CCTV-4K，不能播的会被test_url自动过滤）
-#   sat  = 卫视频道组
+# (pid, 显示名, 分组)
 YANGSHIPIN_CHANNELS = [
-    # 央视频道（高清镜像）
     (600001859, "CCTV-1 综合",       "cctv"),
     (600001800, "CCTV-2 财经",       "cctv"),
     (600001801, "CCTV-3 综艺",       "cctv"),
@@ -27,11 +23,10 @@ YANGSHIPIN_CHANNELS = [
     (600001806, "CCTV-11 戏曲",      "cctv"),
     (600001807, "CCTV-12 社会与法",  "cctv"),
     (600001811, "CCTV-13 新闻",      "cctv"),
-    (600001809, "CCTV-14 少儿",      "cctv"),
+    (600001809, "CCTV-14 少儿",       "cctv"),
     (600001815, "CCTV-15 音乐",      "cctv"),
     (600098637, "CCTV-16 奥林匹克",  "cctv"),
     (600001810, "CCTV-17 农业农村",  "cctv"),
-    # 央视精品（CGTN + 付费频道 + 4K；不能播的自动过滤）
     (600002264, "CCTV-4K 超高清",    "plus"),
     (600014550, "CGTN",              "plus"),
     (600084704, "CGTN 法语",         "plus"),
@@ -52,7 +47,6 @@ YANGSHIPIN_CHANNELS = [
     (600099652, "CCTV 央视台球",     "plus"),
     (600099656, "CCTV 电视指南",     "plus"),
     (600099651, "CCTV 卫生健康",     "plus"),
-    # 全国卫视
     (600002309, "北京卫视",          "sat"),
     (600002521, "江苏卫视",          "sat"),
     (600002483, "东方卫视",          "sat"),
@@ -90,43 +84,36 @@ YANGSHIPIN_CHANNELS = [
 
 LOCAL_FILE = "live_channels.txt"
 TIMEOUT = 10
-PARALLEL_FETCH = 5  # 并发抓页面数（yangshipin并发限制内）
+CONCURRENCY = 5   # 同时开5个page
+WAIT_MS = 10000    # 每个页面等10秒
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
 
 
-def grab_m3u8_one(task):
-    """单个频道抓m3u8，每次调用独立开playwright实例（线程安全）"""
+async def fetch_one(context, task, sem):
+    """单个频道抓取（async并发）"""
     pid, display, group = task
-    from playwright.sync_api import sync_playwright
-
     page_url = f"https://www.yangshipin.cn/tv/home?pid={pid}"
     m3u8_urls = []
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent=HEADERS["User-Agent"],
-                extra_http_headers={"Referer": "https://www.yangshipin.cn/"},
-            )
-            page = context.new_page()
+    async with sem:
+        page = await context.new_page()
+        try:
+            def on_response(resp):
+                if ".m3u8" in resp.url and "favicon" not in resp.url:
+                    m3u8_urls.append(resp.url)
+            page.on("response", on_response)
 
-            def handle_response(response):
-                url = response.url
-                if ".m3u8" in url and "favicon" not in url:
-                    m3u8_urls.append(url)
+            await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(WAIT_MS)
+        except Exception as e:
+            print(f"  [{display}] err: {e}")
+        finally:
+            await page.close()
 
-            page.on("response", handle_response)
-            page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(10000)
-            browser.close()
-    except Exception as e:
-        print(f"  [{display}] 抓取异常: {e}")
-
-    # 按路径去重
+    # 去重
     seen = set()
     result = []
     for u in m3u8_urls:
@@ -137,8 +124,33 @@ def grab_m3u8_one(task):
     return (display, group, result)
 
 
+async def fetch_all(tasks):
+    from playwright.async_api import async_playwright
+
+    results = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            extra_http_headers={"Referer": "https://www.yangshipin.cn/"},
+        )
+        sem = asyncio.Semaphore(CONCURRENCY)
+        print(f"并发抓取 {len(tasks)} 个频道（concurrency={CONCURRENCY}）...")
+        coros = [fetch_one(context, t, sem) for t in tasks]
+        done = 0
+        for coro in asyncio.as_completed(coros):
+            display, group, urls = await coro
+            done += 1
+            if urls:
+                print(f"  [{done}/{len(tasks)}] {display} -> {len(urls)} 条")
+            else:
+                print(f"  [{done}/{len(tasks)}] {display} -> 未抓到")
+            results.append((display, group, urls))
+        await browser.close()
+    return results
+
+
 def test_url(url):
-    """检测m3u8是否真能播放：200 + 返回内容是EXTM3U"""
     try:
         r = requests.get(
             url,
@@ -161,40 +173,28 @@ def test_url(url):
 
 
 def main():
-    print("=== 开始更新直播源（纯央视听yangshipin + Playwright） ===")
+    print("=== 开始更新直播源 ===")
+    results = asyncio.run(fetch_all(YANGSHIPIN_CHANNELS))
 
-    cctv_channels = {}
-    plus_channels = {}
-    sat_channels = {}
+    cctv_channels, plus_channels, sat_channels = {}, {}, {}
+    for display, group, urls in results:
+        if not urls:
+            continue
+        if group == "cctv":
+            cctv_channels[display] = urls
+        elif group == "plus":
+            plus_channels[display] = urls
+        else:
+            sat_channels[display] = urls
 
-    # 并发抓所有yangshipin频道
-    print(f"\n并发抓取 {len(YANGSHIPIN_CHANNELS)} 个频道（并发数={PARALLEL_FETCH}）...")
-    tasks = list(YANGSHIPIN_CHANNELS)
-    done_count = 0
-    with ThreadPoolExecutor(max_workers=PARALLEL_FETCH) as ex:
-        futures = {ex.submit(grab_m3u8_one, t): t for t in tasks}
-        for fut in as_completed(futures):
-            display, group, urls = fut.result()
-            done_count += 1
-            if not urls:
-                print(f"  [{done_count}/{len(tasks)}] {display} -> 未抓到m3u8")
-                continue
-            print(f"  [{done_count}/{len(tasks)}] {display} -> {len(urls)} 条")
-            if group == "cctv":
-                cctv_channels[display] = urls
-            elif group == "plus":
-                plus_channels[display] = urls
-            else:
-                sat_channels[display] = urls
-
-    # 批量检测
-    print(f"\n批量检测m3u8可用性...")
+    # 批量检测URL
+    print("\n批量检测m3u8可用性...")
     all_urls = set()
     for d in (cctv_channels, plus_channels, sat_channels):
         for urls in d.values():
             all_urls.update(urls)
 
-    alive_urls = set()
+    alive = set()
     dead = 0
     with ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(test_url, u): u for u in all_urls}
@@ -205,17 +205,15 @@ def main():
             if done % 20 == 0:
                 print(f"  进度 {done}/{len(all_urls)}")
             if ok:
-                alive_urls.add(u)
+                alive.add(u)
             else:
                 dead += 1
+    print(f"  可用 {len(alive)}, 失效 {dead}")
 
-    print(f"  可用 {len(alive_urls)}, 失效 {dead}")
-
-    # 写文件
     def filter_out(d):
         out = []
         for display, urls in d.items():
-            good = [u for u in urls if u in alive_urls]
+            good = [u for u in urls if u in alive]
             if good:
                 out.append(f"{display},{'#'.join(good)}")
         return out
@@ -238,9 +236,8 @@ def main():
 
     print(f"\n=== 完成 ===")
     print(f"央视: {len(cctv_out)} 个")
-    print(f"央视精品(CGTN/付费/4K): {len(plus_out)} 个")
+    print(f"央视精品: {len(plus_out)} 个")
     print(f"卫视: {len(sat_out)} 个")
-    print(f"输出: {LOCAL_FILE}")
 
 
 if __name__ == "__main__":
