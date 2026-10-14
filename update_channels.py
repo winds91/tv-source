@@ -15,7 +15,7 @@ ORANGE_BACKUP_URL = "https://live.zbds.top/tv/iptv4.m3u"
 LOCAL_FILE = "live_channels.txt"
 
 # 检测超时（秒）
-TIMEOUT = 5
+TIMEOUT = 8
 
 def normalize_name(name):
     """
@@ -107,11 +107,35 @@ def parse_txt(content):
     return channels
 
 def test_url(url):
-    """检测URL是否可用"""
+    """检测URL是否真正可用（状态码200 + 返回内容是m3u8）"""
     try:
         r = requests.get(url, timeout=TIMEOUT, stream=True)
-        if r.status_code == 200:
+        if r.status_code != 200:
+            return (url, False)
+        
+        # 读前500字节验证内容是不是真正的m3u8
+        content = next(r.iter_content(500), b"")
+        try:
+            text = content.decode("utf-8", errors="ignore")
+        except:
+            return (url, False)
+        
+        # 真正的m3u8应该包含这些关键词之一
+        if "#EXTM3U" in text or "#EXT-X-STREAM" in text or "#EXTINF" in text:
             return (url, True)
+        
+        # 有些源不返回EXTM3U头，但直接返回ts流，这种也算可用
+        content_type = r.headers.get("content-type", "")
+        if "mpegurl" in content_type or "octet-stream" in content_type:
+            return (url, True)
+        
+        # 检查是不是JSON错误（很多假源返回{"error":...}但状态码200）
+        if text.strip().startswith("{") and "error" in text.lower():
+            return (url, False)
+        if "错误" in text or "没有配置" in text:
+            return (url, False)
+        
+        # 其他200但内容不对的，也算不可用
         return (url, False)
     except:
         return (url, False)
