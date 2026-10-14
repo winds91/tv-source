@@ -108,6 +108,42 @@ async def fetch_one(context, task, sem):
 
             await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
 
+            # 注入JS：主动查找video元素并触发播放（模拟my-tv-1的ahtv1.js逻辑）
+            # 解决yangshipin播放器不自动播放导致抓不到m3u8的问题
+            play_js = """
+            (function() {
+                function triggerPlay(video) {
+                    video.muted = false;
+                    video.controls = false;
+                    if (video.paused) {
+                        var p = video.play();
+                        if (p !== undefined && p !== null) {
+                            p.catch(function() {
+                                video.muted = true;
+                                video.play().then(function() {
+                                    setTimeout(function() { video.muted = false; }, 200);
+                                }).catch(function() {});
+                            });
+                        }
+                    }
+                }
+                function checkVideo() {
+                    var videos = document.getElementsByTagName('video');
+                    for (var i = 0; i < videos.length; i++) {
+                        triggerPlay(videos[i]);
+                    }
+                }
+                // 立即检查一次
+                checkVideo();
+                // 每2秒检查一次，持续30秒
+                var interval = setInterval(function() {
+                    checkVideo();
+                }, 2000);
+                setTimeout(function() { clearInterval(interval); }, 30000);
+            })();
+            """
+            await page.evaluate_script(play_js)
+
             # 智能等待：最多等40秒，每1秒检查一次m3u8是否出现
             # 出现后再等3秒让其他码率线路也加载完
             for i in range(40):
