@@ -108,9 +108,9 @@ async def fetch_one(context, task, sem):
 
             await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
 
-            # 智能等待：最多等25秒，每1秒检查一次m3u8是否出现
+            # 智能等待：最多等40秒，每1秒检查一次m3u8是否出现
             # 出现后再等3秒让其他码率线路也加载完
-            for i in range(25):
+            for i in range(40):
                 await page.wait_for_timeout(1000)
                 if m3u8_urls:
                     # 已经抓到至少一个，再等3秒让其他线路加载
