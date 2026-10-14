@@ -1,14 +1,3 @@
 央视频道,#genre#
-CCTV-1 综合,https://ldncctvwbcdkshw.v.kcdnvip.com/ldncctvwbcd/cdrmldcctv1_1/index.m3u8?b=200-2100
-CCTV-2 财经,https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv2_1/index.m3u8?BR=td&region=shanghai#https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv2_1/index.m3u8?b=200-2100
-CCTV-3 综艺,https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv3_1/index.m3u8?b=200-1200#https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv3_1/index.m3u8?BR=hd&region=shanghai
-CCTV-4 中文国际,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv4_1_720P/playlist.m3u8?wsApp=HLS#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv4_1/index.m3u8?b=200-2100
-CCTV-6 电影,https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv6_1/index.m3u8?b=200-1200#https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv6_1/index.m3u8?BR=hd&region=shanghai
-CCTV-7 国防军事,https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv7_1/index.m3u8?b=200-2100#https://ldocctvwbcdkshw.v.kcdnvip.com/ldocctvwbcd/cdrmldcctv7_1/index.m3u8?BR=td&region=shanghai
-CCTV-8 电视剧,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv8_1/index.m3u8?b=200-1200
-CCTV-10 科教,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv10_1/index.m3u8?b=200-2100#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv10_1_720P/playlist.m3u8?wsApp=HLS
-CCTV-11 戏曲,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv11_1_720P/playlist.m3u8?wsApp=HLS#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv11_1/index.m3u8?b=200-2100
-CCTV-12 社会与法,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv12_1_720P/playlist.m3u8?wsApp=HLS#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv12_1/index.m3u8?b=200-2100
-CCTV-13 新闻,https://ldncctvwbcdkshw.v.kcdnvip.com/ldncctvwbcd/cdrmldcctv13_1/index.m3u8?b=200-2100#https://ldncctvwbcdkshw.v.kcdnvip.com/ldncctvwbcd/cdrmldcctv13_1/index.m3u8?BR=td&region=shanghai
-CCTV-15 音乐,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv15_1_720P/playlist.m3u8?wsApp=HLS#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv15_1/index.m3u8?b=200-2100
-CCTV-17 农业农村,https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv17_1_720P/playlist.m3u8?wsApp=HLS#https://ldocctvwbcdcnchw.v.cdn20.com/ldocctvwbcd/cdrmldcctv17_1/index.m3u8?b=200-2100
+
+卫视频道,#genre#
