@@ -3,7 +3,6 @@
 # 用 async_playwright 真正并发抓页面，避免 sync API 跨线程问题
 
 import asyncio
-import aiohttp
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
