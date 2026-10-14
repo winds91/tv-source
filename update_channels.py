@@ -106,7 +106,7 @@ async def fetch_one(context, task, sem):
                     m3u8_urls.append(resp.url)
             page.on("response", on_response)
 
-            await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(page_url, wait_until="load", timeout=30000)
 
             # 注入JS：主动查找video元素并触发播放（模拟my-tv-1的ahtv1.js逻辑）
             # 解决yangshipin播放器不自动播放导致抓不到m3u8的问题
@@ -142,7 +142,7 @@ async def fetch_one(context, task, sem):
                 setTimeout(function() { clearInterval(interval); }, 30000);
             })();
             """
-            await page.evaluate_script(play_js)
+            await page.evaluate(play_js)
 
             # 智能等待：最多等40秒，每1秒检查一次m3u8是否出现
             # 出现后再等3秒让其他码率线路也加载完
@@ -173,7 +173,13 @@ async def fetch_all(tasks):
 
     results = []
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--autoplay-policy=no-user-gesture-required",  # 放开自动播放限制
+                "--mute-audio",  # headless模式下静音，避免播放被阻止
+            ],
+        )
         context = await browser.new_context(
             user_agent=HEADERS["User-Agent"],
             extra_http_headers={"Referer": "https://www.yangshipin.cn/"},
