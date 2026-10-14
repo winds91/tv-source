@@ -1,15 +1,32 @@
 # -*- coding: utf-8 -*-
-# GitHub Actions自动更新直播源脚本
-# 功能：拉取橙子主源+备用源，合并当前仓库的频道，智能合并同名频道，批量检测失效URL，写回live_channels.txt
+# GitHub Actions自动更新直播源脚本（纯央视网官方源 + Playwright无头浏览器）
+# 功能：用Playwright打开央视网每个频道的直播页，等待JS执行完，提取真实的m3u8视频地址
 
 import re
 import os
+import json
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 橙子IPTV源
-ORANGE_MAIN_URL = "https://raw.githubusercontent.com/OrangeWay520/my-iptv/master/my_channels.m3u"
-ORANGE_BACKUP_URL = "https://live.zbds.top/tv/iptv4.m3u"
+# 所有央视频道列表（频道路径, 显示名）
+CCTV_CHANNELS = [
+    ("cctv1", "CCTV-1 综合"),
+    ("cctv2", "CCTV-2 财经"),
+    ("cctv3", "CCTV-3 综艺"),
+    ("cctv4", "CCTV-4 中文国际"),
+    ("cctv5", "CCTV-5 体育"),
+    ("cctv6", "CCTV-6 电影"),
+    ("cctv7", "CCTV-7 国防军事"),
+    ("cctv8", "CCTV-8 电视剧"),
+    ("cctv9", "CCTV-9 纪录"),
+    ("cctv10", "CCTV-10 科教"),
+    ("cctv11", "CCTV-11 戏曲"),
+    ("cctv12", "CCTV-12 社会与法"),
+    ("cctv13", "CCTV-13 新闻"),
+    ("cctv15", "CCTV-15 音乐"),
+    ("cctv16", "CCTV-16 奥林匹克"),
+    ("cctv17", "CCTV-17 农业农村"),
+]
 
 # 当前仓库的文件
 LOCAL_FILE = "live_channels.txt"
@@ -17,199 +34,174 @@ LOCAL_FILE = "live_channels.txt"
 # 检测超时（秒）
 TIMEOUT = 8
 
-def normalize_name(name):
-    """
-    规范化频道名，用于合并同名频道
-    例如：CCTV-1、CCTV1、CCTV1HD、CCTV1综合 -> 都归一为 cctv1
-    """
-    n = name.strip().upper()
-    # 去掉横杠、空格
-    n = n.replace("-", "").replace(" ", "").replace("　", "")
-    # 去掉常见后缀
-    for suffix in ["HD", "高清", "标清", "1080P", "720P", "1080", "720", "PLUS", "+"]:
-        n = n.replace(suffix, "")
-    # 去掉中文后缀（综合、财经、综艺等），只保留数字编号
-    # CCTV1综合 -> CCTV1
-    n = re.sub(r"(CCTV\d+).*$", r"\1", n)
-    return n
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://tv.cctv.com/"
+}
 
-def display_name(name):
-    """生成显示用的频道名（用短名，去掉中文后缀）"""
-    n = name.strip()
-    # CCTV1综合 -> CCTV-1
-    m = re.match(r"CCTV(\d+).*", n)
-    if m:
-        return f"CCTV-{m.group(1)}"
-    # CCTV1 -> CCTV-1
-    m = re.match(r"^CCTV(\d+)$", n)
-    if m:
-        return f"CCTV-{m.group(1)}"
-    return n
+def fetch_with_playwright(channel_path):
+    """
+    用Playwright打开央视网直播页，提取真实的m3u8视频地址
+    返回: [m3u8_url1, m3u8_url2, ...]
+    """
+    from playwright.sync_api import sync_playwright
+    
+    url = f"https://tv.cctv.com/live/{channel_path}/"
+    m3u8_urls = []
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            extra_http_headers={"Referer": "https://tv.cctv.com/"}
+        )
+        page = context.new_page()
+        
+        # 监听所有网络请求，找m3u8
+        def handle_response(response):
+            if ".m3u8" in response.url:
+                m3u8_urls.append(response.url)
+        
+        page.on("response", handle_response)
+        
+        try:
+            # 打开页面，等待网络空闲
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            # 再等5秒让JS完全执行
+            page.wait_for_timeout(5000)
+        except Exception as e:
+            print(f"  {channel_path}: 页面加载超时 {e}")
+        
+        browser.close()
+    
+    return list(set(m3u8_urls))
 
-def fetch_url(url):
-    """下载URL内容"""
+def fetch_vdn_api(channel_name):
+    """
+    备用方案：调用央视网VDN API，获取音频地址
+    """
+    vdn_url = "https://vdn.live.cntv.cn/api2/liveHtml5.do"
+    params = {
+        "channel": f"pa://cctv_p2p_hd{channel_name}",
+        "client": "html5"
+    }
     try:
-        r = requests.get(url, timeout=15)
-        if r.status_code == 200:
-            return r.text
+        r = requests.get(vdn_url, params=params, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        
+        text = r.text
+        m = re.search(r"var\s+html5VideoData\s*=\s*'(\{.*?\})';", text)
+        if not m:
+            return []
+        
+        json_str = m.group(1).replace("\\'", "'")
+        data = json.loads(json_str)
+        
+        if data.get("ack") != "yes":
+            return []
+        
+        hls_urls = data.get("hls_url", {})
+        m3u8_list = []
+        for key, value in hls_urls.items():
+            if value and isinstance(value, str) and ".m3u8" in value:
+                m3u8_list.append(value)
+        
+        return m3u8_list
     except Exception as e:
-        print(f"下载失败 {url}: {e}")
-    return None
-
-def parse_m3u(content):
-    """解析m3u文件，返回 {规范化名: [原始名, urls]}"""
-    channels = {}
-    lines = content.split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        if line.startswith("#EXTINF:"):
-            m = re.search(r'tvg-name="([^"]*)"', line)
-            if m:
-                name = m.group(1).strip()
-            else:
-                parts = line.split(",")
-                name = parts[-1].strip() if len(parts) > 1 else f"channel_{i}"
-            
-            if i + 1 < len(lines):
-                url = lines[i+1].strip()
-                if url.startswith("http") or url.startswith("rtsp"):
-                    norm = normalize_name(name)
-                    if norm not in channels:
-                        channels[norm] = {"display": name, "urls": []}
-                    if url not in channels[norm]["urls"]:
-                        channels[norm]["urls"].append(url)
-            i += 2
-        else:
-            i += 1
-    return channels
-
-def parse_txt(content):
-    """解析txt格式，返回 {规范化名: [原始名, urls]}"""
-    channels = {}
-    for line in content.split("\n"):
-        line = line.strip()
-        if not line or line.endswith("#genre#") or line.startswith("#"):
-            continue
-        if "," not in line:
-            continue
-        parts = line.split(",", 1)
-        name = parts[0].strip()
-        urls_str = parts[1].strip()
-        urls = [u.strip() for u in urls_str.split("#") if u.strip().startswith("http") or u.strip().startswith("rtsp")]
-        if urls:
-            norm = normalize_name(name)
-            if norm not in channels:
-                channels[norm] = {"display": name, "urls": []}
-            for u in urls:
-                if u not in channels[norm]["urls"]:
-                    channels[norm]["urls"].append(u)
-    return channels
+        print(f"  {channel_name}: VDN API失败 {e}")
+        return []
 
 def test_url(url):
     """检测URL是否真正可用（状态码200 + 返回内容是m3u8）"""
     try:
-        r = requests.get(url, timeout=TIMEOUT, stream=True)
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True)
         if r.status_code != 200:
             return (url, False)
         
-        # 读前500字节验证内容是不是真正的m3u8
         content = next(r.iter_content(500), b"")
         try:
             text = content.decode("utf-8", errors="ignore")
         except:
             return (url, False)
         
-        # 真正的m3u8应该包含这些关键词之一
         if "#EXTM3U" in text or "#EXT-X-STREAM" in text or "#EXTINF" in text:
             return (url, True)
         
-        # 有些源不返回EXTM3U头，但直接返回ts流，这种也算可用
         content_type = r.headers.get("content-type", "")
         if "mpegurl" in content_type or "octet-stream" in content_type:
             return (url, True)
         
-        # 检查是不是JSON错误（很多假源返回{"error":...}但状态码200）
         if text.strip().startswith("{") and "error" in text.lower():
             return (url, False)
         if "错误" in text or "没有配置" in text:
             return (url, False)
         
-        # 其他200但内容不对的，也算不可用
         return (url, False)
     except:
         return (url, False)
 
 def main():
-    print("=== 开始更新直播源 ===")
+    print("=== 开始更新直播源（纯央视网官方源 + Playwright） ===")
     
-    # 1. 读取当前仓库的live_channels.txt
-    existing_channels = {}
-    if os.path.exists(LOCAL_FILE):
-        with open(LOCAL_FILE, "r", encoding="utf-8") as f:
-            existing_channels = parse_txt(f.read())
-        print(f"当前仓库频道数: {len(existing_channels)}")
+    all_channels = {}  # {频道名: {display: 显示名, urls: [url1, url2]}}
     
-    # 2. 拉取橙子主源
-    print("\n拉取橙子主源...")
-    main_content = fetch_url(ORANGE_MAIN_URL)
-    main_channels = {}
-    if main_content:
-        main_channels = parse_m3u(main_content)
-        print(f"橙子主源频道数: {len(main_channels)}")
+    # 方案1：先用Playwright抓真实视频地址
+    print("\n用Playwright抓视频地址...")
+    for channel_path, display_name in CCTV_CHANNELS:
+        print(f"抓取 {channel_path} ({display_name})...")
+        try:
+            m3u8_list = fetch_with_playwright(channel_path)
+            if m3u8_list:
+                all_channels[channel_path] = {
+                    "display": display_name,
+                    "urls": m3u8_list
+                }
+                print(f"  找到 {len(m3u8_list)} 个视频地址")
+            else:
+                print(f"  未找到视频地址，尝试VDN API...")
+                # 备用方案：用VDN API
+                backup_urls = fetch_vdn_api(channel_path)
+                if backup_urls:
+                    all_channels[channel_path] = {
+                        "display": display_name,
+                        "urls": backup_urls
+                    }
+                    print(f"  VDN API 找到 {len(backup_urls)} 个地址")
+                else:
+                    print(f"  未找到任何地址")
+        except Exception as e:
+            print(f"  Playwright失败: {e}")
+            # 备用方案：用VDN API
+            backup_urls = fetch_vdn_api(channel_path)
+            if backup_urls:
+                all_channels[channel_path] = {
+                    "display": display_name,
+                    "urls": backup_urls
+                }
+                print(f"  VDN API 找到 {len(backup_urls)} 个地址")
     
-    # 3. 拉取橙子备用源
-    print("\n拉取橙子备用源...")
-    backup_content = fetch_url(ORANGE_BACKUP_URL)
-    backup_channels = {}
-    if backup_content:
-        backup_channels = parse_m3u(backup_content)
-        print(f"橙子备用源频道数: {len(backup_channels)}")
+    print(f"\n获取到 {len(all_channels)} 个频道")
     
-    # 4. 合并所有频道（按规范化名合并）
-    all_channels = dict(existing_channels)
-    for norm, data in main_channels.items():
-        if norm not in all_channels:
-            all_channels[norm] = data
-        else:
-            # 合并URL
-            existing_urls = set(all_channels[norm]["urls"])
-            for u in data["urls"]:
-                if u not in existing_urls:
-                    all_channels[norm]["urls"].append(u)
-                    existing_urls.add(u)
-    
-    for norm, data in backup_channels.items():
-        if norm not in all_channels:
-            all_channels[norm] = data
-        else:
-            existing_urls = set(all_channels[norm]["urls"])
-            for u in data["urls"]:
-                if u not in existing_urls:
-                    all_channels[norm]["urls"].append(u)
-                    existing_urls.add(u)
-    
-    print(f"\n合并后总频道数: {len(all_channels)}")
-    
-    # 5. 收集所有唯一URL
+    # 收集所有唯一URL
     all_urls = set()
     for data in all_channels.values():
         for u in data["urls"]:
             all_urls.add(u)
     print(f"唯一URL数: {len(all_urls)}")
     
-    # 6. 批量检测
+    # 批量检测
     print("\n开始批量检测...")
     alive_urls = set()
     dead_count = 0
     
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(test_url, url): url for url in all_urls}
         done = 0
         for future in as_completed(futures):
             url, is_alive = future.result()
             done += 1
-            if done % 50 == 0:
+            if done % 10 == 0:
                 print(f"  进度: {done}/{len(all_urls)}")
             if is_alive:
                 alive_urls.add(url)
@@ -218,58 +210,26 @@ def main():
     
     print(f"\n检测完成: 可用 {len(alive_urls)}, 失效 {dead_count}")
     
-    # 7. 过滤失效URL
+    # 过滤失效URL
     final_channels = {}
-    for norm, data in all_channels.items():
+    for channel_name, data in all_channels.items():
         good_urls = [u for u in data["urls"] if u in alive_urls]
         if good_urls:
-            final_channels[norm] = {"display": display_name(data["display"]), "urls": good_urls}
+            final_channels[channel_name] = {
+                "display": data["display"],
+                "urls": good_urls
+            }
     
     print(f"最终频道数: {len(final_channels)}")
     
-    # 8. 按分组分类
-    cctv = []
-    satellite = []
-    local = []
-    
-    for norm, data in final_channels.items():
-        name = data["display"]
-        if norm.startswith("CCTV") or "CGTN" in norm:
-            cctv.append((norm, name, data["urls"]))
-        elif "卫视" in name:
-            satellite.append((norm, name, data["urls"]))
-        else:
-            local.append((norm, name, data["urls"]))
-    
-    # 排序
-    def sort_key(item):
-        norm = item[0]
-        # CCTV按数字排序
-        m = re.match(r"CCTV(\d+)", norm)
-        if m:
-            return (0, int(m.group(1)), norm)
-        return (1, norm)
-    
-    cctv.sort(key=sort_key)
-    satellite.sort(key=lambda x: x[1])
-    local.sort(key=lambda x: x[1])
-    
-    # 9. 写回文件
+    # 写回文件
     with open(LOCAL_FILE, "w", encoding="utf-8", newline="\n") as f:
         f.write("央视频道,#genre#\n")
-        for norm, name, urls in cctv:
-            f.write(f"{name},{'#'.join(urls)}\n")
-        
-        f.write("\n卫视频道,#genre#\n")
-        for norm, name, urls in satellite:
-            f.write(f"{name},{'#'.join(urls)}\n")
-        
-        f.write("\n地方频道,#genre#\n")
-        for norm, name, urls in local:
-            f.write(f"{name},{'#'.join(urls)}\n")
+        for channel_name, data in final_channels.items():
+            f.write(f"{data['display']},{'#'.join(data['urls'])}\n")
     
     print(f"\n=== 更新完成 ===")
-    print(f"央视: {len(cctv)}, 卫视: {len(satellite)}, 地方: {len(local)}")
+    print(f"频道数: {len(final_channels)}")
     print(f"输出文件: {LOCAL_FILE}")
 
 if __name__ == "__main__":
