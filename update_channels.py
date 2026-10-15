@@ -76,11 +76,9 @@ def check_url_valid(url):
         if '#EXTM3U' in content or '#EXTINF' in content:
             return True
         else:
-            print(f"  无效（不是 m3u8）: {url[:80]}...")
             return False
 
     except Exception as e:
-        print(f"  无效: {url[:80]}... - {e}")
         return False
 
 
@@ -145,19 +143,53 @@ def main():
     # 3. 生成 live_channels.txt
     print("=== 生成 live_channels.txt ===\n", flush=True)
 
+    # 央视频道的固定顺序
+    CCTV_ORDER = [
+        "CCTV-1", "CCTV-2", "CCTV-3", "CCTV-4", "CCTV-5", "CCTV-6",
+        "CCTV-7", "CCTV-8", "CCTV-9", "CCTV-10", "CCTV-11", "CCTV-12",
+        "CCTV-13", "CCTV-14", "CCTV-15", "CCTV-16", "CCTV-17"
+    ]
+
+    # 卫视频道的固定顺序
+    SAT_ORDER = [
+        "湖南卫视", "浙江卫视", "东方卫视", "江苏卫视", "北京卫视",
+        "广东卫视", "深圳卫视", "黑龙江卫视", "安徽卫视", "东南卫视",
+        "河南卫视", "江西卫视", "辽宁卫视", "甘肃卫视", "内蒙古卫视",
+        "青海卫视", "山西卫视", "西藏卫视", "新疆卫视", "天津卫视",
+        "重庆卫视", "四川卫视", "山东卫视", "湖北卫视"
+    ]
+
     with open("live_channels.txt", "w", encoding="utf-8") as f:
         f.write("央视频道,#genre#\n")
 
-        # 先写央视频道
-        cctv_channels = {k: v for k, v in valid_channels.items() if 'CCTV' in k or '央视' in k}
-        for norm_name, channel_info in cctv_channels.items():
+        # 先写央视频道，按固定顺序
+        cctv_channels = {k: v for k, v in valid_channels.items() if 'CCTV' in k}
+        cctv_order_norm = [normalize_name(n) for n in CCTV_ORDER]
+
+        for cctv_name in CCTV_ORDER:
+            norm_name = normalize_name(cctv_name)
+            if norm_name in cctv_channels:
+                f.write(f"{cctv_name},{'#'.join(cctv_channels[norm_name]['urls'])}\n")
+
+        # 再写其他央视频道（付费频道等）
+        other_cctv = {k: v for k, v in cctv_channels.items() if k not in cctv_order_norm}
+        for norm_name, channel_info in other_cctv.items():
             f.write(f"{channel_info['original_name']},{'#'.join(channel_info['urls'])}\n")
 
         f.write("\n卫视频道,#genre#\n")
 
-        # 再写卫视频道
+        # 再写卫视频道，按固定顺序
         sat_channels = {k: v for k, v in valid_channels.items() if '卫视' in v["original_name"]}
-        for norm_name, channel_info in sat_channels.items():
+        sat_order_norm = [normalize_name(n) for n in SAT_ORDER]
+
+        for sat_name in SAT_ORDER:
+            norm_name = normalize_name(sat_name)
+            if norm_name in sat_channels:
+                f.write(f"{sat_name},{'#'.join(sat_channels[norm_name]['urls'])}\n")
+
+        # 再写其他卫视频道
+        other_sat = {k: v for k, v in sat_channels.items() if k not in sat_order_norm}
+        for norm_name, channel_info in other_sat.items():
             f.write(f"{channel_info['original_name']},{'#'.join(channel_info['urls'])}\n")
 
         f.write("\n地方频道,#genre#\n")
