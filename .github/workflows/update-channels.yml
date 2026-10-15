@@ -2,7 +2,7 @@ name: Update TV Channels
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # 每天凌晨2点（北京时间上午10点）
+    - cron: '*/15 * * * *'  # 每15分钟跑一次
   workflow_dispatch:
 
 jobs:
