@@ -2,7 +2,7 @@ name: Update TV Channels
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # 每15分钟跑一次
+    - cron: '0 * * * *'  # 每小时跑一次
   workflow_dispatch:
 
 jobs:
@@ -19,21 +19,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Python deps
-        run: pip install -r requirements.txt
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-v1
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: playwright install --with-deps
 
       - name: Update channels
         run: python update_channels.py
